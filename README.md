@@ -10,3 +10,7 @@ from a small `.github/workflows/security.yml`, pinned to a full commit SHA of th
   tag appears; the gate is excluded from cooldown and gets its own PR.
 - `scripts/new-packages.js` looks up every npm package a PR adds on the registry; its
   self-test (`node --test scripts/*.test.js`) runs as the `unit` job of `self-test.yml`.
+- zizmor (v2.3.0) audits the repo's workflows. New high-severity findings fail the gate;
+  every finding goes to code scanning as SARIF (category `zizmor`). Callers must grant
+  `security-events: write` to the `security` job for the upload, so a version that needs it
+  is rolled out with `rollout-callers.sh` (new caller template), not by a Dependabot SHA bump.

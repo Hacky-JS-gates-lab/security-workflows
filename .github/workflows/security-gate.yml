@@ -21,6 +21,10 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      # Upload zizmor's SARIF to code scanning. The caller must grant it too: a called
+      # workflow can only keep or lower the caller's permissions. Fork and Dependabot PRs
+      # get a read-only token, so the upload step skips them.
+      security-events: write
     steps:
       - name: Check out the repo under test (full history, for the baseline)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,6 +52,20 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: ../gate/scripts/gate.sh
+
+      - name: Send every zizmor finding to code scanning
+        if: >-
+          always() &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+          github.actor != 'dependabot[bot]'
+        # Reporting, not a check: if the gate stopped before zizmor ran, or the repo is private
+        # without GitHub Code Security, the upload fails, and that must not fail the gate.
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/gate/zizmor.sarif
+          checkout_path: ${{ github.workspace }}/repo
+          category: zizmor
 
       - name: Keep the findings for noise measurement
         if: always()

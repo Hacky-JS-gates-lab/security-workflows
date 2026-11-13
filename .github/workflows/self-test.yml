@@ -12,6 +12,9 @@ permissions:
 
 jobs:
   security:
+    permissions:
+      contents: read
+      security-events: write
     uses: ./.github/workflows/security-gate.yml
     with:
       mode: block
