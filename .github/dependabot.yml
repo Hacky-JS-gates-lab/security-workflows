@@ -1,0 +1,16 @@
+# Keeps the gate's own actions (actions/checkout, actions/upload-artifact) up to date.
+# Their SHAs are pinned with a version comment; Dependabot updates both.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
