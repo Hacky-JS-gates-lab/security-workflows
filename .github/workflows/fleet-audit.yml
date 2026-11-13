@@ -1,0 +1,95 @@
+# Daily fleet audit: runs audit/fleet-audit.sh against the whole org and keeps one issue
+# "Fleet audit: drift detected" in this repo open while anything has drifted.
+# Reading org settings and other repos' rulesets needs more than the GITHUB_TOKEN, so the
+# checks run with a token from the read-only GitHub App "fleet-audit" (audit/app-manifest.json):
+#   variable FLEET_AUDIT_CLIENT_ID and secret FLEET_AUDIT_PRIVATE_KEY on this repo.
+# Without them the run only reports "no credentials configured". The issue is written
+# with this repo's own GITHUB_TOKEN, so the App needs no write permission anywhere.
+name: fleet-audit
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: fleet-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check for App credentials
+        id: creds
+        env:
+          CLIENT_ID: ${{ vars.FLEET_AUDIT_CLIENT_ID }}
+          KEY_SET: ${{ secrets.FLEET_AUDIT_PRIVATE_KEY != '' }}
+        run: |
+          if [ -n "$CLIENT_ID" ] && [ "$KEY_SET" = true ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=fleet-audit::No credentials configured: set variable FLEET_AUDIT_CLIENT_ID and secret FLEET_AUDIT_PRIVATE_KEY. Nothing was checked."
+            {
+              echo "## Fleet audit not run"
+              echo
+              echo "No credentials configured (variable FLEET_AUDIT_CLIENT_ID, secret FLEET_AUDIT_PRIVATE_KEY). See the README."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.creds.outputs.ok == 'true'
+        with:
+          persist-credentials: false
+
+      - name: Get a read-only App token for the org
+        id: app
+        if: steps.creds.outputs.ok == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.FLEET_AUDIT_CLIENT_ID }}
+          private-key: ${{ secrets.FLEET_AUDIT_PRIVATE_KEY }}
+          # The audit has to see every repo, new ones included, so the token isn't scoped to a list.
+          owner: ${{ github.repository_owner }} # zizmor: ignore[github-app]
+          # Ask for read-only scopes even if the App was given more by mistake.
+          permission-metadata: read
+          permission-contents: read
+          permission-administration: read
+          permission-actions: read
+          permission-secret-scanning-alerts: read
+          permission-organization-administration: read
+          permission-members: read
+
+      - name: Run the fleet checks
+        id: audit
+        if: steps.creds.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ORG: ${{ github.repository_owner }}
+          OUT: ${{ runner.temp }}/fleet-audit
+        run: |
+          if audit/fleet-audit.sh > /dev/null; then echo "drift=0" >> "$GITHUB_OUTPUT"; else echo "drift=1" >> "$GITHUB_OUTPUT"; fi
+          cat "$OUT/report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.creds.outputs.ok == 'true'
+        with:
+          name: fleet-audit
+          path: ${{ runner.temp }}/fleet-audit
+          retention-days: 90
+
+      - name: Open, update or close the drift issue
+        if: steps.creds.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REPORT: ${{ runner.temp }}/fleet-audit/report.md
+          DRIFT: ${{ steps.audit.outputs.drift }}
+        run: audit/report-issue.sh "$REPORT" "$DRIFT"

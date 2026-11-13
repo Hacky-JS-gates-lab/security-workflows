@@ -14,3 +14,8 @@ from a small `.github/workflows/security.yml`, pinned to a full commit SHA of th
   every finding goes to code scanning as SARIF (category `zizmor`). Callers must grant
   `security-events: write` to the `security` job for the upload, so a version that needs it
   is rolled out with `rollout-callers.sh` (new caller template), not by a Dependabot SHA bump.
+- `fleet-audit.yml` (lesson 8.2) runs `audit/fleet-audit.sh` every day at 06:17 UTC and keeps one
+  issue "Fleet audit: drift detected" open while anything has drifted. It reads the org with a
+  token from a read-only GitHub App (`audit/app-manifest.json`): set the repo variable
+  `FLEET_AUDIT_CLIENT_ID` and the secret `FLEET_AUDIT_PRIVATE_KEY`. Without them it only warns.
+  `audit/` holds copies of the course's check scripts; accepted org gaps are in `audit/accepted-gaps.txt`.
