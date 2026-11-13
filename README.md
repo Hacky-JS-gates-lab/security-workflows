@@ -8,3 +8,5 @@ from a small `.github/workflows/security.yml`, pinned to a full commit SHA of th
 - The required status check in every repo's ruleset is `security / gate`.
 - Dependabot (`.github/dependabot.yml` in each fleet repo) also proposes the bump when a new
   tag appears; the gate is excluded from cooldown and gets its own PR.
+- `scripts/new-packages.js` looks up every npm package a PR adds on the registry; its
+  self-test (`node --test scripts/*.test.js`) runs as the `unit` job of `self-test.yml`.
