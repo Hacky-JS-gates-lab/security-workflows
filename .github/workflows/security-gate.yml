@@ -1,0 +1,40 @@
+# The org's security gate, called by .github/workflows/security.yml in every repo.
+# Callers pin this file by full commit SHA, so a change here reaches a repo only when
+# its caller is bumped (by a PR the security team owns).
+name: security-gate
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "audit: record only. warn: annotate, never fail. block: fail on new findings."
+        type: string
+        required: false
+        default: block
+
+permissions: {}
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check the inputs
+        env:
+          MODE: ${{ inputs.mode }}
+          GATE_REF: ${{ job.workflow_repository }}@${{ job.workflow_sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          case "$MODE" in
+            audit|warn|block) ;;
+            *) echo "::error::mode must be audit, warn or block, got '$MODE'"; exit 1 ;;
+          esac
+          {
+            echo "## Security gate"
+            echo "Gate: \`$GATE_REF\`, mode: \`$MODE\`, base: \`${PR_BASE_SHA:-none (not a pull request)}\`"
+            echo
+            echo "No scanners yet. This version only proves the wiring."
+          } >> "$GITHUB_STEP_SUMMARY"

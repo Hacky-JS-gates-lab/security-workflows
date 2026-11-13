@@ -1,0 +1,6 @@
+# actionlint 1.7.12 predates the job.workflow_repository / job.workflow_sha context
+# properties that let a reusable workflow check out its own repo. Ignore only that error.
+paths:
+  .github/workflows/security-gate.yml:
+    ignore:
+      - 'property "workflow_(repository|sha)" is not defined'

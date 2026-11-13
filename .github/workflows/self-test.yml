@@ -1,0 +1,17 @@
+# Runs this repo's own version of the gate on every PR to it, so a broken gate fails
+# here before any caller is bumped. The job id `security` gives the same check name
+# as in the fleet repos: "security / gate".
+name: security
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    uses: ./.github/workflows/security-gate.yml
+    with:
+      mode: block
