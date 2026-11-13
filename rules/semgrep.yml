@@ -1,0 +1,71 @@
+# The gate's Semgrep rules: a few high-signal patterns for Node services, owned and
+# versioned with the gate. Every rule here blocks a PR, so each one must be worth it.
+rules:
+  - id: shell-command-from-request
+    message: >-
+      Request data reaches a shell command. Use execFile or spawn with an argument
+      array, and check the value against an allowlist.
+    severity: ERROR
+    languages: [javascript, typescript]
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.query
+          - pattern: $REQ.body
+          - pattern: $REQ.params
+          - pattern: $REQ.headers
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec($CMD, ...)
+              - pattern: execSync($CMD, ...)
+              - pattern: $CP.exec($CMD, ...)
+              - pattern: $CP.execSync($CMD, ...)
+          - focus-metavariable: $CMD
+
+  - id: code-from-request
+    message: Request data is run as code. Never pass request data to eval, Function or vm.
+    severity: ERROR
+    languages: [javascript, typescript]
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.query
+          - pattern: $REQ.body
+          - pattern: $REQ.params
+          - pattern: $REQ.headers
+    pattern-sinks:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: new Function(...)
+          - pattern: $VM.runInNewContext(...)
+          - pattern: $VM.runInThisContext(...)
+
+  - id: sql-from-request
+    message: Request data is built into a SQL string. Use a parameterised query.
+    severity: ERROR
+    languages: [javascript, typescript]
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.query
+          - pattern: $REQ.body
+          - pattern: $REQ.params
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.query($SQL, ...)
+              - pattern: $DB.execute($SQL, ...)
+              - pattern: $DB.raw($SQL, ...)
+          - focus-metavariable: $SQL
+
+  - id: deep-merge-request-body
+    message: >-
+      The whole request body is deep-merged into an object. This allows mass assignment
+      and prototype pollution. Copy the allowed fields one by one.
+    severity: ERROR
+    languages: [javascript, typescript]
+    pattern-either:
+      - pattern: $L.merge($T, $REQ.body, ...)
+      - pattern: $L.mergeWith($T, $REQ.body, ...)
+      - pattern: $L.defaultsDeep($T, $REQ.body, ...)
