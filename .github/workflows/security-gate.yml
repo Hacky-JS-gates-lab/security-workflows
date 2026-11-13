@@ -48,3 +48,12 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: ../gate/scripts/gate.sh
+
+      - name: Keep the findings for noise measurement
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-gate-findings
+          path: ${{ runner.temp }}/gate/findings.json
+          if-no-files-found: ignore
+          retention-days: 30
