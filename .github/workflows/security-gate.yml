@@ -45,4 +45,6 @@ jobs:
           GATE_REF: ${{ job.workflow_repository }}@${{ job.workflow_sha }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: ../gate/scripts/gate.sh
