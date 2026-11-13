@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Security gate: Semgrep, gitleaks, dependency review and actionlint on what a PR changes,
+# Security gate: Semgrep, gitleaks, dependency review, lockfile checks and actionlint on what a PR changes,
 # with three modes and expiring exceptions. Runs in the checkout of the repo under test.
 #   audit  record findings in the summary and the artifact; never fail
 #   warn   also annotate the PR with warnings; never fail
@@ -62,6 +62,36 @@ jq '[.[] | select(.change_type == "added") | . as $d | .vulnerabilities[]?
      | {tool: "deps", rule: .advisory_ghsa_id, path: $d.manifest, line: 1,
         message: "\($d.name)@\($d.version): \(.severity) \(.advisory_summary)"}]' "$OUT/deps.json" > "$OUT/f-deps.json"
 
+# 3b. Lockfiles (PRs only). A PR that changes the dependencies in a package.json must change
+#     the lockfile next to it, or CI and every developer resolve their own versions. And no
+#     npm lockfile entry the PR adds may come from outside the registry (git, http, file).
+REGISTRY="${ALLOWED_REGISTRY:-https://registry.npmjs.org/}"
+echo '[]' > "$OUT/f-lockfile.json"
+if [[ -n "$base" ]]; then
+  depfields() { git show "$1" 2>/dev/null | jq -cS '[.dependencies, .devDependencies, .optionalDependencies,
+    .peerDependencies, .overrides]' 2>/dev/null || echo none; }
+  while read -r pj; do
+    dir=$(dirname "$pj")
+    [[ "$(depfields "$base:$pj")" == "$(depfields "HEAD:$pj")" ]] && continue
+    git diff --quiet "$base" HEAD -- "$dir/package-lock.json" "$dir/npm-shrinkwrap.json" \
+      "$dir/yarn.lock" "$dir/pnpm-lock.yaml" || continue
+    jq -n --arg p "$pj" '{tool: "lockfile", rule: "lockfile-not-updated", path: $p, line: 1,
+      message: "dependencies changed in \($p) but no lockfile next to it changed: run npm install and commit the lockfile"}'
+  done < <(git diff --name-only "$base" HEAD -- 'package.json' '**/package.json') | jq -s '.' > "$OUT/lock-a.json"
+  # Entries (path -> resolved URL) outside the registry, in the head lockfiles but not the base.
+  sources() { git show "$1" 2>/dev/null | jq -r --arg r "$REGISTRY" '.packages // {} | to_entries[]
+    | select(.key != "" and (.value.link | not))
+    | select((.value.resolved // "none") | startswith($r) | not)
+    | "\(.key)\t\(.value.resolved // "no resolved URL")"' 2>/dev/null || true; }
+  while read -r lf; do
+    comm -13 <(sources "$base:$lf" | sort) <(sources "HEAD:$lf" | sort) \
+      | jq -R --arg f "$lf" 'split("\t") | {tool: "lockfile", rule: "non-registry-source", path: $f, line: 1,
+          message: "\(.[0] | sub("^.*node_modules/"; "")) resolves from \(.[1]), not the registry"}'
+  done < <(git diff --name-only "$base" HEAD -- 'package-lock.json' '**/package-lock.json' \
+             'npm-shrinkwrap.json' '**/npm-shrinkwrap.json') | jq -s '.' > "$OUT/lock-b.json"
+  jq -s 'add' "$OUT/lock-a.json" "$OUT/lock-b.json" > "$OUT/f-lockfile.json"
+fi
+
 # 4. actionlint: workflow errors the PR adds. Lint the base too and keep only new ones,
 #    matched on file, kind and message (line numbers shift).
 lint() {
@@ -123,7 +153,7 @@ n=$(jq 'map(select(.excepted == null)) | length' "$OUT/findings.json")
   echo
   echo "| Tool | Findings | Covered by an exception |"
   echo "|---|---|---|"
-  for t in semgrep gitleaks deps actionlint exceptions; do
+  for t in semgrep gitleaks deps lockfile actionlint exceptions; do
     jq -r --arg t "$t" 'map(select(.tool == $t)) | "| \($t) | \(map(select(.excepted == null)) | length) | \(map(select(.excepted != null)) | length) |"' "$OUT/findings.json"
   done
   echo
