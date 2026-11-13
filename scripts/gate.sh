@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Security gate: Semgrep, gitleaks, dependency review, lockfile checks and actionlint on what a PR changes,
-# with three modes and expiring exceptions. Runs in the checkout of the repo under test.
+# Security gate: Semgrep, gitleaks, dependency review, lockfile and new-package checks and actionlint
+# on what a PR changes, with three modes and expiring exceptions. Runs in the checkout of the repo under test.
 #   audit  record findings in the summary and the artifact; never fail
 #   warn   also annotate the PR with warnings; never fail
 #   block  annotate with errors; fail on any finding not covered by a valid exception,
@@ -92,6 +92,11 @@ if [[ -n "$base" ]]; then
   jq -s 'add' "$OUT/lock-a.json" "$OUT/lock-b.json" > "$OUT/f-lockfile.json"
 fi
 
+# 3c. New packages (PRs only): every npm package the PR adds must exist on the registry and
+#     must not be brand new (scripts/new-packages.js; thresholds via MIN_*_AGE_DAYS).
+echo '[]' > "$OUT/f-packages.json"
+[[ -z "$base" ]] || node "$GATE_DIR/scripts/new-packages.js" "$base" "$OUT/f-packages.json"
+
 # 4. actionlint: workflow errors the PR adds. Lint the base too and keep only new ones,
 #    matched on file, kind and message (line numbers shift).
 lint() {
@@ -153,7 +158,7 @@ n=$(jq 'map(select(.excepted == null)) | length' "$OUT/findings.json")
   echo
   echo "| Tool | Findings | Covered by an exception |"
   echo "|---|---|---|"
-  for t in semgrep gitleaks deps lockfile actionlint exceptions; do
+  for t in semgrep gitleaks deps lockfile packages actionlint exceptions; do
     jq -r --arg t "$t" 'map(select(.tool == $t)) | "| \($t) | \(map(select(.excepted == null)) | length) | \(map(select(.excepted != null)) | length) |"' "$OUT/findings.json"
   done
   echo
