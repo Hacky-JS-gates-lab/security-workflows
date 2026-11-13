@@ -1,0 +1,14 @@
+# gitleaks config for the gate: all default rules, plus the org's own token format.
+# Provider tokens have prefixes the default rules know. Internal tokens usually don't,
+# so the generic rule finds them only when the value looks random enough. Name them here.
+title = "security gate"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "internal-api-token"
+description = "Internal API token: 40 hex characters assigned to a *_API_TOKEN name"
+regex = '''(?i)\b[A-Z0-9_]*API_TOKEN\s*[=:]\s*["']?([0-9a-f]{40})\b'''
+secretGroup = 1
+keywords = ["api_token"]
