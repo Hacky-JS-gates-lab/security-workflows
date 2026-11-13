@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Security gate: Semgrep, gitleaks, dependency review, lockfile and new-package checks and actionlint
+# Security gate: Semgrep, gitleaks, dependency review, lockfile and new-package checks, actionlint and zizmor
 # on what a PR changes, with three modes and expiring exceptions. Runs in the checkout of the repo under test.
 #   audit  record findings in the summary and the artifact; never fail
 #   warn   also annotate the PR with warnings; never fail
@@ -21,6 +21,7 @@ MAX_DAYS=90
 SEMGREP="semgrep/semgrep:1.185.0@sha256:67518c174185a2043fdbed16c70631b79209499b3671178e7194379b48295a0d"
 GITLEAKS="zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 ACTIONLINT="rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667"
+ZIZMOR="ghcr.io/zizmorcore/zizmor:1.32.0@sha256:3014cc8f68f663935f69b3c3e0e41f5ce102b268d97db13db0f62208747f860d"
 # Scanners run as the runner's user so git inside the containers trusts the checkout.
 run() { docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$OUT:/out" "$@"; }
 
@@ -119,6 +120,38 @@ jq --slurpfile old "$OUT/lint-base.json" '
      | {tool: "actionlint", rule: .kind, path: .filepath, line, message}]' \
   "$OUT/lint-head.json" > "$OUT/f-actionlint.json"
 
+# 4b. zizmor: workflow security audits (template injection, dangerous triggers, excessive
+#     permissions, unpinned or impostor actions...). With GH_TOKEN it also runs the online audits.
+#     Everything it finds goes to zizmor.sarif (uploaded to code scanning by the workflow). Only
+#     High-severity findings the PR adds count toward the gate, matched on file, audit and the
+#     code they point at (line numbers shift). Ignore comments and .github/zizmor.yml are honoured;
+#     both live under .github/, which the security team owns.
+zizmor() {
+  local rc=0
+  run -v "$1:/repo:ro" -w /repo -e GH_TOKEN "$ZIZMOR" --no-progress --no-exit-codes "${@:2}" . || rc=$?
+  [[ $rc -eq 0 ]] || { echo "::error::zizmor failed (exit $rc)" >&2; return 1; }
+}
+zkeys() { jq '[.[] | select(.determinations.severity == "High") | .locations[0] as $l
+  | {path: ($l.symbolic.key.Local.given_path // $l.symbolic.key.Local.verbatim_path // "?" | sub("^\\./"; "")),
+     line: ($l.concrete.location.start_point.row + 1), ident, desc,
+     key: "\($l.symbolic.key.Local.verbatim_path // "?")|\(.ident)|\($l.concrete.feature | gsub("\\s+"; " "))"}]'; }
+if [[ -d .github ]]; then
+  zizmor "$PWD" --format json > "$OUT/zizmor-head.json"
+  zizmor "$PWD" --format sarif > "$OUT/zizmor.sarif"
+else
+  echo '[]' > "$OUT/zizmor-head.json"
+fi
+echo '[]' > "$OUT/zizmor-base.json"
+if [[ -n "$base" && -d "$OUT/base/.github" ]]; then
+  zizmor "$OUT/base" --format json > "$OUT/zizmor-base.json"
+fi
+zkeys < "$OUT/zizmor-head.json" > "$OUT/z-head.json"
+zkeys < "$OUT/zizmor-base.json" > "$OUT/z-base.json"
+jq --slurpfile old "$OUT/z-base.json" '($old[0] | map(.key)) as $seen
+  | [.[] | select(.key as $k | $seen | index($k) | not)
+     | {tool: "zizmor", rule: .ident, path, line, message: .desc}]' "$OUT/z-head.json" > "$OUT/f-zizmor.json"
+ztotal=$(jq -r 'group_by(.determinations.severity) | map("\(length) \(.[0].determinations.severity | ascii_downcase)") | join(", ")' "$OUT/zizmor-head.json")
+
 # 5. Exceptions: entries in .github/security-exceptions.yml (owned by the security team in
 #    CODEOWNERS). A valid entry covers findings with the same rule and path. An expired or
 #    invalid entry is itself a finding, so it fails the gate in block mode until someone
@@ -158,9 +191,11 @@ n=$(jq 'map(select(.excepted == null)) | length' "$OUT/findings.json")
   echo
   echo "| Tool | Findings | Covered by an exception |"
   echo "|---|---|---|"
-  for t in semgrep gitleaks deps lockfile packages actionlint exceptions; do
+  for t in semgrep gitleaks deps lockfile packages actionlint zizmor exceptions; do
     jq -r --arg t "$t" 'map(select(.tool == $t)) | "| \($t) | \(map(select(.excepted == null)) | length) | \(map(select(.excepted != null)) | length) |"' "$OUT/findings.json"
   done
+  echo
+  echo "zizmor found ${ztotal:-nothing} in this repo's workflows (all of it is in code scanning); only new high-severity findings count above."
   echo
   jq -r '.[] | "- **\(.tool)** `\(.rule)` \(.path):\(.line) \(.message)\(if .excepted then " (exception \(.excepted))" else "" end)"' "$OUT/findings.json"
 } >> "$SUMMARY"
