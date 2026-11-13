@@ -1,0 +1,6 @@
+# check-org.sh failures the security team has accepted for now: <check> <expires YYYY-MM-DD> <reason>
+# An accepted check is reported as ACCEPTED, not drift, until its date. After that it is drift again.
+two_factor_requirement_enabled 2027-01-31 UI-only setting; turn it on after every member has 2FA
+members_can_change_repo_visibility 2027-01-31 UI-only setting, not exposed by the REST API
+members_can_delete_repositories 2027-01-31 UI-only setting, not exposed by the REST API
+members_can_invite_outside_collaborators 2027-01-31 UI-only setting, not exposed by the REST API
